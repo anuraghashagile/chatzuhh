@@ -33,6 +33,7 @@ export interface Message {
   sender: 'me' | 'stranger' | 'system';
   senderName?: string; // Added for Global Chat identification
   senderPeerId?: string; // Added for P2P connection from Global Chat
+  senderProfile?: UserProfile; // Added for Profile Modal display
   timestamp: number;
   isVanish?: boolean;
   reactions?: Reaction[]; // Added for reactions
@@ -86,4 +87,10 @@ export interface ConnectionMetadata {
 export interface DirectMessageEvent {
   peerId: string;
   message: Message;
+}
+
+export interface DirectStatusEvent {
+  peerId: string;
+  type: 'typing' | 'recording';
+  value: boolean;
 }

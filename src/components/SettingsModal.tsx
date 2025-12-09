@@ -35,17 +35,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-[#0A0A0F] rounded-2xl shadow-2xl w-full max-w-sm border border-slate-200 dark:border-white/10 overflow-hidden animate-in zoom-in-95 duration-200 font-sans relative">
+      <div className="bg-white dark:bg-[#0A0A0F] rounded-2xl shadow-2xl w-full max-w-sm border border-slate-200 dark:border-white/10 relative animate-in zoom-in-95 duration-200 font-sans">
         
-        {/* Confirmation Overlay */}
+        {/* Confirmation Overlay (Positioned to cover content properly) */}
         {confirmingVanish && (
-           <div className="absolute inset-0 bg-white dark:bg-[#0A0A0F] z-10 flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
+           <div className="absolute inset-0 bg-white dark:bg-[#0A0A0F] z-10 flex flex-col items-center justify-center p-6 text-center animate-in fade-in rounded-2xl">
                <div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/30 text-purple-600 rounded-full flex items-center justify-center mb-4">
                    <EyeOff size={24} />
                </div>
                <h3 className="text-lg font-bold mb-2 text-slate-900 dark:text-white">Enable Vanish Mode?</h3>
                <p className="text-sm text-slate-500 mb-6 leading-relaxed">
-                   Messages will automatically disappear for <strong className="text-slate-900 dark:text-white">both users</strong> 10 seconds after being seen. This action ensures higher privacy.
+                   Messages will automatically disappear for <strong className="text-slate-900 dark:text-white">both users</strong> 10 seconds after being seen.
                </p>
                <div className="flex gap-3 w-full">
                    <button 

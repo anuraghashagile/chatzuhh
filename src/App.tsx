@@ -76,6 +76,7 @@ export default function App() {
   const prevOnlineUserIds = useRef<Set<string>>(new Set());
 
   // Initialize Chat Hooks
+  // Passing userId as persistentId ensures stable identity across refreshes
   const { 
     messages,
     setMessages, 
@@ -83,16 +84,22 @@ export default function App() {
     partnerTyping, 
     partnerRecording,
     partnerProfile,
+    partnerPeerId,
     remoteVanishMode,
     onlineUsers, 
     myPeerId, 
     error,
     friends,
+    removeFriend,
     incomingFriendRequest, 
     incomingReaction,
-    incomingDirectMessage, 
+    incomingDirectMessage,
+    incomingDirectStatus,
     sendMessage, 
     sendDirectMessage,
+    sendDirectImage,
+    sendDirectAudio,
+    sendDirectTyping,
     sendDirectFriendRequest, 
     sendImage, 
     sendAudio,
@@ -107,7 +114,7 @@ export default function App() {
     connect, 
     callPeer, 
     disconnect 
-  } = useHumanChat(userProfile);
+  } = useHumanChat(userProfile, userId);
 
   const { globalMessages, sendGlobalMessage } = useGlobalChat(userProfile, myPeerId);
 
@@ -342,6 +349,9 @@ export default function App() {
 
   const isConnected = status === ChatMode.CONNECTED;
   const isSearching = status === ChatMode.SEARCHING || status === ChatMode.WAITING;
+  
+  // Check if current partner is a friend
+  const isCurrentPartnerFriend = partnerPeerId ? friends.some(f => f.id === partnerPeerId) : false;
 
   // --- VIEW RENDERING LOGIC ---
   const renderMainContent = () => {
@@ -382,7 +392,10 @@ export default function App() {
          )}
 
          {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-2 w-full max-w-4xl mx-auto z-10 relative scroll-smooth">
+        <div className={clsx(
+          "flex-1 overflow-y-auto p-4 sm:p-6 space-y-2 w-full max-w-4xl mx-auto z-10 relative scroll-smooth",
+          (messages.length === 0 && (status === ChatMode.DISCONNECTED || status === ChatMode.IDLE)) && "flex flex-col justify-center"
+        )}>
           {!partnerProfile && status === ChatMode.CONNECTED && (
               <div className="text-center text-xs text-slate-400 my-4">Connected encrypted connection...</div>
           )}
@@ -399,13 +412,22 @@ export default function App() {
           ))}
 
           {(status === ChatMode.DISCONNECTED || status === ChatMode.IDLE) && !isSearching && (
-              <div className="py-8 flex flex-col items-center gap-6 animate-in fade-in zoom-in-95 mt-8 border-t border-slate-100 dark:border-white/5 pt-8">
-                <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400"><Shield size={32} /></div>
-                <div className="text-center space-y-1">
-                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">Chat Ended</h3>
-                  <p className="text-slate-500 dark:text-slate-400 text-sm">You have disconnected.</p>
+              <div className={clsx(
+                "flex flex-col items-center gap-6 animate-in fade-in zoom-in-95",
+                messages.length > 0 ? "py-8 mt-8 border-t border-slate-100 dark:border-white/5 pt-8" : "w-full"
+              )}>
+                <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-2">
+                   <Shield size={40} />
                 </div>
-                <Button onClick={handleNewChat} className="shadow-lg shadow-brand-500/20 px-8"><RefreshCw size={18} /> Find New Stranger</Button>
+                <div className="text-center space-y-2">
+                  <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Chat Ended</h3>
+                  <p className="text-slate-500 dark:text-slate-400 text-base max-w-xs mx-auto">
+                    The connection has been closed.
+                  </p>
+                </div>
+                <Button onClick={handleNewChat} className="shadow-lg shadow-brand-500/20 px-8 py-4 text-lg rounded-2xl w-full sm:w-auto">
+                   <RefreshCw size={20} /> Find New Stranger
+                </Button>
               </div>
           )}
           <div ref={messagesEndRef} />
@@ -483,6 +505,7 @@ export default function App() {
           onOpenSettings={() => setShowSettingsModal(true)}
           onEditProfile={() => setShowEditProfileModal(true)}
           onAddFriend={sendFriendRequest}
+          isFriend={isCurrentPartnerFriend}
         />
       )}
 
@@ -585,6 +608,9 @@ export default function App() {
           privateMessages={messages}
           sendPrivateMessage={sendMessage} 
           sendDirectMessage={sendDirectMessage} 
+          sendDirectImage={sendDirectImage}
+          sendDirectAudio={sendDirectAudio}
+          sendDirectTyping={sendDirectTyping}
           sendDirectFriendRequest={sendDirectFriendRequest}
           sendReaction={sendReaction}
           currentPartner={partnerProfile}
@@ -593,9 +619,11 @@ export default function App() {
           onEditMessage={initiateEdit}
           sessionType={sessionType}
           incomingReaction={incomingReaction}
-          incomingDirectMessage={incomingDirectMessage} 
+          incomingDirectMessage={incomingDirectMessage}
+          incomingDirectStatus={incomingDirectStatus} 
           onCloseDirectChat={() => setSessionType('random')} 
           friends={friends} 
+          removeFriend={removeFriend}
         />
       )}
     </div>

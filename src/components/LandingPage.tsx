@@ -1,5 +1,6 @@
+
 import React, { useState } from 'react';
-import { ArrowRight, Infinity, Shield, Check, AlertCircle, FileText, X, Sun, Moon } from 'lucide-react';
+import { ArrowRight, Ghost, Shield, Check, AlertCircle, FileText, X, Sun, Moon, Infinity } from 'lucide-react';
 import { Button } from './Button';
 import { clsx } from 'clsx';
 
@@ -20,7 +21,7 @@ All conversations occur at your own risk, and you understand that we are not res
 
 Your continued use of this platform signifies full acceptance of these rules and complete responsibility for your conduct within the app.
 
-(Team ChatZuno)`;
+(Team StrangersInTown)`;
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onlineCount, onStart, theme, toggleTheme }) => {
   const [showTerms, setShowTerms] = useState(false);
@@ -64,9 +65,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onlineCount, onStart, 
       <nav className="relative z-10 p-4 sm:p-6 flex justify-between items-center max-w-6xl mx-auto w-full">
         <div className="flex items-center gap-3 group cursor-pointer">
            <div className="bg-white/60 dark:bg-white/10 p-2 rounded-xl backdrop-blur-md border border-slate-200 dark:border-white/5 group-hover:bg-white/80 dark:group-hover:bg-white/20 transition-all shadow-sm">
-             <Infinity size={24} className="text-slate-900 dark:text-white"/>
+             <img src="https://i.ibb.co/68038vj/73229-1.png" alt="Logo" className="w-6 h-6 object-contain" />
            </div>
-           <span className="font-bold text-xl sm:text-2xl tracking-tight text-slate-900 dark:text-white">Chatzuno</span>
+           <span className="font-bold text-xl sm:text-2xl tracking-tight">
+             <span className="text-slate-900 dark:text-white">Strangers</span><span className="text-red-500">In</span><span className="text-slate-900 dark:text-white">Town</span>
+           </span>
         </div>
         
         <div className="flex items-center gap-3 sm:gap-4">

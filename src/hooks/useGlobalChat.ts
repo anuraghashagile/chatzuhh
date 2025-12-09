@@ -38,6 +38,7 @@ export const useGlobalChat = (userProfile: UserProfile | null, myPeerId: string 
       sender: 'stranger',
       senderName: userProfile.username, 
       senderPeerId: myPeerId || undefined, // Include my peer ID so others can add/message me
+      senderProfile: userProfile, // Include full profile
       timestamp: Date.now(),
       type: 'text'
     };

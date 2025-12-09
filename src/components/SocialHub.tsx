@@ -1,9 +1,8 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Users, History, Globe, MessageCircle, X, Wifi, Heart, ArrowLeft, Send, UserPlus, Check } from 'lucide-react';
-import { UserProfile, PresenceState, RecentPeer, Message, ChatMode, SessionType, Friend, DirectMessageEvent } from '../types';
+import { Users, History, Globe, MessageCircle, X, Wifi, Heart, ArrowLeft, Send, UserPlus, Check, Trash2, Image as ImageIcon, Mic, Square, MapPin, Smile } from 'lucide-react';
+import { UserProfile, PresenceState, RecentPeer, Message, ChatMode, SessionType, Friend, DirectMessageEvent, DirectStatusEvent } from '../types';
 import { clsx } from 'clsx';
 import { MessageBubble } from './MessageBubble';
 import { Button } from './Button';
@@ -18,6 +17,9 @@ interface SocialHubProps {
   privateMessages: Message[]; // Main chat messages
   sendPrivateMessage: (text: string) => void; // Main chat send
   sendDirectMessage?: (peerId: string, text: string, id?: string) => void; // Direct chat send updated signature
+  sendDirectImage?: (peerId: string, base64: string, id?: string) => void;
+  sendDirectAudio?: (peerId: string, base64: string, id?: string) => void;
+  sendDirectTyping?: (peerId: string, isTyping: boolean) => void;
   sendDirectFriendRequest?: (peerId: string) => void; // New prop for friend requests
   sendReaction?: (messageId: string, emoji: string) => void;
   currentPartner: UserProfile | null;
@@ -27,8 +29,10 @@ interface SocialHubProps {
   sessionType: SessionType;
   incomingReaction?: { messageId: string, emoji: string, sender: 'stranger' } | null;
   incomingDirectMessage?: DirectMessageEvent | null;
+  incomingDirectStatus?: DirectStatusEvent | null;
   onCloseDirectChat?: () => void;
   friends?: Friend[]; // Accept friends as prop
+  removeFriend?: (peerId: string) => void;
 }
 
 export const SocialHub: React.FC<SocialHubProps> = ({ 
@@ -41,6 +45,9 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   privateMessages,
   sendPrivateMessage,
   sendDirectMessage,
+  sendDirectImage,
+  sendDirectAudio,
+  sendDirectTyping,
   sendDirectFriendRequest,
   sendReaction,
   currentPartner,
@@ -50,8 +57,10 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   sessionType,
   incomingReaction,
   incomingDirectMessage,
+  incomingDirectStatus,
   onCloseDirectChat,
-  friends: friendsProp = []
+  friends: friendsProp = [],
+  removeFriend
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'online' | 'recent' | 'global' | 'friends'>('online');
@@ -64,23 +73,31 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   // Inputs
   const [globalInput, setGlobalInput] = useState('');
   const [privateInput, setPrivateInput] = useState('');
+  const [isRecordingPrivate, setIsRecordingPrivate] = useState(false);
   
   // Active Chat State
   const [activePeer, setActivePeer] = useState<{id: string, profile: UserProfile} | null>(null);
   const [localChatHistory, setLocalChatHistory] = useState<Message[]>([]);
+  const [peerTypingStatus, setPeerTypingStatus] = useState<Record<string, boolean>>({});
   
-  // User Actions Modal State (Global Chat)
-  const [selectedGlobalUser, setSelectedGlobalUser] = useState<{id: string, name: string} | null>(null);
+  // User Profile Modal State
+  const [viewingProfile, setViewingProfile] = useState<{id: string, profile: UserProfile} | null>(null);
+  
+  // Confirmation State
+  const [confirmRemoveFriend, setConfirmRemoveFriend] = useState<string | null>(null);
 
   // Refs for scrolling
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const privateMessagesEndRef = useRef<HTMLDivElement>(null);
+  const privateFileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Portal Target for Trigger Button
   const [triggerTarget, setTriggerTarget] = useState<HTMLElement | null>(null);
 
   // Update trigger target when status changes (input bar mounts/unmounts)
-  // With persistent layout, this should be stable, but we check just in case.
   useEffect(() => {
     const checkAnchor = () => {
        const el = document.getElementById('social-hub-trigger-anchor');
@@ -88,9 +105,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
          setTriggerTarget(el);
        }
     };
-    
     checkAnchor();
-    // Re-check periodically or on status change to be safe
     const interval = setInterval(checkAnchor, 500);
     return () => clearInterval(interval);
   }, [triggerTarget, chatStatus]);
@@ -100,16 +115,54 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     setFriends(friendsProp);
   }, [friendsProp]);
 
+  // --- PERSISTENCE LOGIC (STRONG STORAGE) ---
+  
+  // 1. Restore Active Chat on Mount
+  useEffect(() => {
+    const storedActive = localStorage.getItem('active_social_peer');
+    if (storedActive) {
+      try {
+        const parsed = JSON.parse(storedActive);
+        if (parsed && parsed.id && parsed.profile) {
+          setActivePeer(parsed);
+          setIsOpen(true); // Open the hub if we restored a chat
+          // We need to trigger the connection logic as well
+          onCallPeer(parsed.id, parsed.profile);
+        }
+      } catch (e) {
+        console.warn("Failed to restore active chat", e);
+      }
+    }
+    
+    // Also explicitly reload recent peers and friends
+    try {
+      const storedRecents = localStorage.getItem('recent_peers');
+      if (storedRecents) setRecentPeers(JSON.parse(storedRecents));
+      
+      const storedFriends = localStorage.getItem('chat_friends');
+      if (storedFriends) setFriends(JSON.parse(storedFriends));
+    } catch(e) {}
+  }, []); // Run once on mount
+
+  // 2. Persist Active Chat when it changes
+  useEffect(() => {
+    if (activePeer) {
+      localStorage.setItem('active_social_peer', JSON.stringify(activePeer));
+    } else {
+      localStorage.removeItem('active_social_peer');
+    }
+  }, [activePeer]);
+
   // --- 1. LOAD DATA ---
   useEffect(() => {
-    // Load Recent
+    // Load Recent (Refresh list when tab changes)
     const storedRecents = localStorage.getItem('recent_peers');
     if (storedRecents) {
       try { setRecentPeers(JSON.parse(storedRecents)); } catch (e) {}
     }
-  }, [isOpen, chatStatus, incomingDirectMessage]); // Reload when message arrives to update Recents order
+  }, [isOpen, activeTab, incomingDirectMessage]);
 
-  // --- 2. LOAD CHAT HISTORY WHEN CLICKING A USER ---
+  // --- 2. LOAD CHAT HISTORY ---
   useEffect(() => {
     if (activePeer) {
       const storageKey = `chat_history_${activePeer.id}`;
@@ -133,26 +186,24 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     }
   }, [activePeer]);
 
-  // --- 3. HANDLE INCOMING DIRECT MESSAGES & NOTIFICATIONS ---
+  // --- 3. HANDLE INCOMING DIRECT MESSAGES ---
   useEffect(() => {
     if (incomingDirectMessage) {
       const { peerId, message } = incomingDirectMessage;
       
-      // Update persistent storage for this peer
       const storageKey = `chat_history_${peerId}`;
       const existingHistory = localStorage.getItem(storageKey);
       let history: Message[] = existingHistory ? JSON.parse(existingHistory) : [];
       
-      // Avoid duplicates
       if (!history.some(m => m.id === message.id)) {
         history.push(message);
-        localStorage.setItem(storageKey, JSON.stringify(history));
+        try {
+           localStorage.setItem(storageKey, JSON.stringify(history));
+        } catch(e) { console.error("Storage full or error", e); }
         
-        // If this peer is active in the view, update the view state
         if (activePeer && activePeer.id === peerId) {
           setLocalChatHistory(history);
         } else {
-          // Increment unread count
           setUnreadCounts(prev => ({
             ...prev,
             [peerId]: (prev[peerId] || 0) + 1
@@ -163,13 +214,12 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   }, [incomingDirectMessage, activePeer]);
 
 
-  // --- 4. SYNC INCOMING REACTIONS TO HISTORICAL MESSAGES ---
+  // --- 4. SYNC INCOMING REACTIONS ---
   useEffect(() => {
     if (incomingReaction && activePeer) {
       setLocalChatHistory(prev => {
         const updatedHistory = prev.map(msg => {
            if (msg.id === incomingReaction.messageId) {
-             // Prevent duplicates
              const hasReaction = msg.reactions?.some(r => r.emoji === incomingReaction.emoji && r.sender === 'stranger');
              if (hasReaction) return msg;
 
@@ -180,11 +230,23 @@ export const SocialHub: React.FC<SocialHubProps> = ({
            }
            return msg;
         });
-        localStorage.setItem(`chat_history_${activePeer.id}`, JSON.stringify(updatedHistory));
+        try {
+           localStorage.setItem(`chat_history_${activePeer.id}`, JSON.stringify(updatedHistory));
+        } catch(e) { console.error("Storage error", e); }
         return updatedHistory;
       });
     }
   }, [incomingReaction, activePeer]);
+
+  // --- 5. HANDLE INCOMING TYPING STATUS ---
+  useEffect(() => {
+    if (incomingDirectStatus) {
+       const { peerId, type, value } = incomingDirectStatus;
+       if (type === 'typing') {
+          setPeerTypingStatus(prev => ({ ...prev, [peerId]: value }));
+       }
+    }
+  }, [incomingDirectStatus]);
 
 
   // --- SCROLLING ---
@@ -198,7 +260,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     if (activePeer && isOpen) {
       privateMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [localChatHistory, activePeer, isOpen]);
+  }, [localChatHistory, activePeer, isOpen, peerTypingStatus]);
 
 
   // --- HANDLERS ---
@@ -210,10 +272,27 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     }
   };
 
+  const addMessageToLocal = (msg: Message, peerId: string) => {
+      const storageKey = `chat_history_${peerId}`;
+      const existingHistory = localStorage.getItem(storageKey);
+      let history: Message[] = existingHistory ? JSON.parse(existingHistory) : [];
+      history.push(msg);
+      
+      try {
+         localStorage.setItem(storageKey, JSON.stringify(history));
+      } catch(e) {
+         console.error("Local storage quota exceeded or error", e);
+         // Optional: trimming logic could go here
+      }
+
+      if (activePeer && activePeer.id === peerId) {
+        setLocalChatHistory(history);
+      }
+  };
+
   const handlePrivateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (privateInput.trim() && activePeer) {
-      // 1. Create Optimistic Message with unique ID
       const newMsgId = Date.now().toString() + Math.random().toString(36).substring(2);
       const newMsg: Message = {
         id: newMsgId,
@@ -225,25 +304,100 @@ export const SocialHub: React.FC<SocialHubProps> = ({
         status: 'sent'
       };
 
-      // 2. Update Local State & Storage immediately
-      const updatedHistory = [...localChatHistory, newMsg];
-      setLocalChatHistory(updatedHistory);
-      localStorage.setItem(`chat_history_${activePeer.id}`, JSON.stringify(updatedHistory));
+      addMessageToLocal(newMsg, activePeer.id);
 
-      // 3. Send over Network (Directly to peer)
       if (sendDirectMessage) {
         sendDirectMessage(activePeer.id, privateInput, newMsgId);
-      } else {
-        // Fallback (Legacy behaviour if hook not updated)
-        sendPrivateMessage(privateInput);
       }
 
+      if (sendDirectTyping) sendDirectTyping(activePeer.id, false);
       setPrivateInput('');
     }
   };
 
+  const handlePrivateTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPrivateInput(e.target.value);
+    if (activePeer && sendDirectTyping) {
+       sendDirectTyping(activePeer.id, true);
+       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+       typingTimeoutRef.current = setTimeout(() => {
+         if (activePeer) sendDirectTyping(activePeer.id, false);
+       }, 1000);
+    }
+  };
+
+  const handlePrivateImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && activePeer && sendDirectImage) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result as string;
+        const newMsgId = Date.now().toString() + Math.random().toString(36).substring(2);
+        const newMsg: Message = {
+            id: newMsgId,
+            fileData: base64,
+            type: 'image',
+            sender: 'me',
+            timestamp: Date.now(),
+            reactions: [],
+            status: 'sent'
+        };
+        addMessageToLocal(newMsg, activePeer.id);
+        sendDirectImage(activePeer.id, base64, newMsgId);
+      };
+      reader.readAsDataURL(file);
+    }
+    if (privateFileInputRef.current) privateFileInputRef.current.value = '';
+  };
+
+  const startPrivateRecording = async () => {
+    if (!activePeer) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = () => {
+           const base64Audio = reader.result as string;
+           const newMsgId = Date.now().toString() + Math.random().toString(36).substring(2);
+           const newMsg: Message = {
+                id: newMsgId,
+                fileData: base64Audio,
+                type: 'audio',
+                sender: 'me',
+                timestamp: Date.now(),
+                reactions: [],
+                status: 'sent'
+            };
+            if (activePeer) {
+              addMessageToLocal(newMsg, activePeer.id);
+              if (sendDirectAudio) sendDirectAudio(activePeer.id, base64Audio, newMsgId);
+            }
+        };
+        stream.getTracks().forEach(track => track.stop());
+      };
+      mediaRecorder.start();
+      setIsRecordingPrivate(true);
+    } catch (err) {
+      console.error("Error accessing microphone:", err);
+    }
+  };
+
+  const stopPrivateRecording = () => {
+    if (mediaRecorderRef.current && isRecordingPrivate) {
+      mediaRecorderRef.current.stop();
+      setIsRecordingPrivate(false);
+    }
+  };
+
   const handleReactionSend = (messageId: string, emoji: string) => {
-    // Optimistic update for sender side in local history
     if (activePeer) {
       setLocalChatHistory(prev => {
          const updated = prev.map(msg => {
@@ -255,26 +409,25 @@ export const SocialHub: React.FC<SocialHubProps> = ({
            }
            return msg;
          });
-         localStorage.setItem(`chat_history_${activePeer.id}`, JSON.stringify(updated));
+         try {
+           localStorage.setItem(`chat_history_${activePeer.id}`, JSON.stringify(updated));
+         } catch(e) { console.error("Storage error", e); }
          return updated;
       });
     }
-    // Network send
     if (sendReaction) sendReaction(messageId, emoji);
   };
 
   const openPrivateChat = (peerId: string, profile?: UserProfile) => {
     if (profile) {
       setActivePeer({ id: peerId, profile });
-      // Initiate direct connection without breaking main chat
       onCallPeer(peerId, profile);
-      
-      // Clear notification for this peer
       setUnreadCounts(prev => {
         const next = { ...prev };
         delete next[peerId];
         return next;
       });
+      setViewingProfile(null); // Close profile modal if open
     }
   };
 
@@ -286,10 +439,21 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   const handleFriendRequest = (peerId: string) => {
      if (sendDirectFriendRequest) {
         sendDirectFriendRequest(peerId);
-        // Maybe show toast or success state locally
-        alert("Friend request sent!");
-        setSelectedGlobalUser(null);
+        setViewingProfile(null); // Close modal
      }
+  };
+
+  const handleRemoveFriend = () => {
+    if (activePeer && removeFriend) {
+      setConfirmRemoveFriend(activePeer.id);
+    }
+  };
+
+  const confirmRemove = () => {
+    if (confirmRemoveFriend && removeFriend) {
+       removeFriend(confirmRemoveFriend);
+       setConfirmRemoveFriend(null);
+    }
   };
 
   const isFriend = (peerId: string) => {
@@ -338,7 +502,6 @@ export const SocialHub: React.FC<SocialHubProps> = ({
                        {activePeer.profile.username}
                      </h2>
                      <div className="flex items-center gap-1.5">
-                       {/* Status assumed online if in list */}
                        {onlineUsers.some(u => u.peerId === activePeer.id) ? (
                           <span className="text-xs text-emerald-500 font-medium flex items-center gap-1">
                             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"/> Online
@@ -356,11 +519,101 @@ export const SocialHub: React.FC<SocialHubProps> = ({
                   Social Hub
                 </h2>
               )}
-
-              <button onClick={() => setIsOpen(false)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full hover:bg-black/5 dark:hover:bg-white/5">
-                <X size={20} />
-              </button>
+              
+              <div className="flex items-center gap-1">
+                {activePeer && isFriend(activePeer.id) && (
+                   <button 
+                     onClick={handleRemoveFriend}
+                     className="p-2 text-slate-400 hover:text-red-500 rounded-full hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                     title="Remove Friend"
+                   >
+                     <Trash2 size={18} />
+                   </button>
+                )}
+                <button onClick={() => setIsOpen(false)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full hover:bg-black/5 dark:hover:bg-white/5">
+                  <X size={20} />
+                </button>
+              </div>
             </div>
+            
+            {/* Remove Friend Confirmation Modal */}
+            {confirmRemoveFriend && (
+               <div className="absolute inset-0 z-[110] bg-black/50 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in">
+                  <div className="bg-white dark:bg-[#1a1b26] p-6 rounded-2xl w-full max-w-sm text-center border border-slate-200 dark:border-white/10 shadow-2xl animate-in zoom-in-95">
+                     <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">Remove Friend?</h3>
+                     <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
+                        Are you sure you want to remove this friend? You will need to add them again to connect later.
+                     </p>
+                     <div className="flex gap-3">
+                        <Button variant="secondary" fullWidth onClick={() => setConfirmRemoveFriend(null)}>Cancel</Button>
+                        <Button fullWidth onClick={confirmRemove} className="bg-red-500 hover:bg-red-600">Remove</Button>
+                     </div>
+                  </div>
+               </div>
+            )}
+
+            {/* Profile Viewer Modal */}
+            {viewingProfile && (
+               <div className="absolute inset-0 z-[110] bg-white dark:bg-[#0A0A0F] flex flex-col animate-in slide-in-from-bottom duration-300">
+                  <div className="p-4 border-b border-slate-100 dark:border-white/5 flex items-center justify-between shrink-0">
+                     <h3 className="font-bold text-lg text-slate-900 dark:text-white">Profile</h3>
+                     <button onClick={() => setViewingProfile(null)} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-white/5">
+                        <X size={20} className="text-slate-500" />
+                     </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center">
+                      <div className="w-24 h-24 rounded-full bg-gradient-to-br from-brand-400 to-violet-500 flex items-center justify-center text-white text-4xl font-bold shadow-2xl mb-4">
+                         {viewingProfile.profile.username[0].toUpperCase()}
+                      </div>
+                      <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">
+                         {viewingProfile.profile.username}
+                      </h2>
+                      <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-sm mb-6">
+                         <span>{viewingProfile.profile.age} years</span>
+                         <span>•</span>
+                         <span>{viewingProfile.profile.gender}</span>
+                      </div>
+
+                      <div className="w-full space-y-4">
+                         <div className="bg-slate-50 dark:bg-white/5 p-4 rounded-2xl border border-slate-100 dark:border-white/5">
+                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                               <MapPin size={12}/> Location
+                            </h4>
+                            <p className="text-slate-900 dark:text-white font-medium">
+                               {viewingProfile.profile.location || 'Unknown'}
+                            </p>
+                         </div>
+                         
+                         <div className="bg-slate-50 dark:bg-white/5 p-4 rounded-2xl border border-slate-100 dark:border-white/5">
+                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                               <Smile size={12}/> Interests
+                            </h4>
+                            <div className="flex flex-wrap gap-2">
+                               {viewingProfile.profile.interests.length > 0 ? (
+                                  viewingProfile.profile.interests.map(int => (
+                                     <span key={int} className="px-3 py-1 bg-white dark:bg-white/10 rounded-full text-xs font-medium text-slate-700 dark:text-slate-300 shadow-sm border border-slate-200 dark:border-white/5">
+                                        {int}
+                                     </span>
+                                  ))
+                               ) : (
+                                  <span className="text-slate-400 italic text-sm">No interests listed</span>
+                               )}
+                            </div>
+                         </div>
+                      </div>
+                  </div>
+                  <div className="p-6 border-t border-slate-100 dark:border-white/5 shrink-0 flex flex-col gap-3">
+                      <Button fullWidth onClick={() => openPrivateChat(viewingProfile.id, viewingProfile.profile)}>
+                         <MessageCircle size={18}/> Message
+                      </Button>
+                      {!isFriend(viewingProfile.id) && (
+                         <Button variant="secondary" fullWidth onClick={() => handleFriendRequest(viewingProfile.id)}>
+                            <UserPlus size={18}/> Add Friend
+                         </Button>
+                      )}
+                  </div>
+               </div>
+            )}
 
             {/* --- LIST MODE CONTENT --- */}
             {!activePeer && (
@@ -407,12 +660,11 @@ export const SocialHub: React.FC<SocialHubProps> = ({
                               : "hover:bg-slate-100 dark:hover:bg-white/10"
                           )}
                         >
-                          {/* Main User Info - Click to Open Chat */}
                           <div 
                              className="flex flex-1 items-center gap-3 cursor-pointer"
                              onClick={() => {
                                 if (user.peerId !== myPeerId && user.profile) {
-                                  openPrivateChat(user.peerId, user.profile);
+                                  setViewingProfile({ id: user.peerId, profile: user.profile });
                                 }
                              }}
                           >
@@ -431,30 +683,6 @@ export const SocialHub: React.FC<SocialHubProps> = ({
                                     {user.profile ? `${user.profile.age} • ${user.profile.gender}` : 'Guest'}
                                   </div>
                                 </div>
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex items-center gap-2 pl-3 border-l border-slate-100 dark:border-white/5 ml-3">
-                             {user.peerId !== myPeerId && (
-                                <>
-                                   {!isFriend(user.peerId) ? (
-                                     <button 
-                                       onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleFriendRequest(user.peerId);
-                                       }}
-                                       className="p-2 text-brand-500 hover:bg-brand-50 dark:hover:bg-brand-900/20 rounded-full transition-colors"
-                                       title="Add Friend"
-                                     >
-                                        <UserPlus size={18} />
-                                     </button>
-                                   ) : (
-                                     <div className="p-2 text-emerald-500">
-                                       <Heart size={18} fill="currentColor" />
-                                     </div>
-                                   )}
-                                </>
-                             )}
                           </div>
                         </div>
                       ))}
@@ -548,8 +776,8 @@ export const SocialHub: React.FC<SocialHubProps> = ({
                               <div className="px-3 py-2 rounded-xl text-sm max-w-[85%] bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white break-words">
                                  <button 
                                    onClick={() => {
-                                      if (msg.sender !== 'me' && msg.senderPeerId) {
-                                         setSelectedGlobalUser({ id: msg.senderPeerId, name: msg.senderName || 'Unknown' });
+                                      if (msg.sender !== 'me' && msg.senderPeerId && msg.senderProfile) {
+                                         setViewingProfile({ id: msg.senderPeerId, profile: msg.senderProfile });
                                       }
                                    }}
                                    className={clsx(
@@ -576,34 +804,6 @@ export const SocialHub: React.FC<SocialHubProps> = ({
                            <Send size={18} />
                          </button>
                       </form>
-
-                      {/* --- Global User Action Modal --- */}
-                      {selectedGlobalUser && (
-                         <div className="absolute inset-0 z-10 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm rounded-xl animate-in fade-in">
-                            <div className="bg-white dark:bg-[#1a1b26] p-4 rounded-2xl shadow-xl w-64 space-y-3 border border-slate-200 dark:border-white/10 animate-in zoom-in-95">
-                               <div className="text-center">
-                                  <div className="w-12 h-12 bg-brand-500 text-white rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-2">
-                                     {selectedGlobalUser.name[0].toUpperCase()}
-                                  </div>
-                                  <h3 className="font-bold text-slate-900 dark:text-white">{selectedGlobalUser.name}</h3>
-                               </div>
-                               
-                               {!isFriend(selectedGlobalUser.id) ? (
-                                 <Button fullWidth onClick={() => handleFriendRequest(selectedGlobalUser.id)}>
-                                    <UserPlus size={16} /> Add Friend
-                                 </Button>
-                               ) : (
-                                  <div className="text-center text-xs text-emerald-500 font-bold py-2 flex items-center justify-center gap-1">
-                                     <Check size={14} /> Already Friends
-                                  </div>
-                               )}
-                               
-                               <Button variant="secondary" fullWidth onClick={() => setSelectedGlobalUser(null)}>
-                                  Close
-                               </Button>
-                            </div>
-                         </div>
-                      )}
                     </div>
                   )}
 
@@ -615,7 +815,13 @@ export const SocialHub: React.FC<SocialHubProps> = ({
             {activePeer && (
                <div className="flex-1 flex flex-col p-4 overflow-hidden min-h-0 relative">
                   
-                  <div className="flex-1 space-y-3 mb-4 overflow-y-auto min-h-0 pr-1 pt-2">
+                  {peerTypingStatus[activePeer.id] && (
+                     <div className="absolute top-0 left-0 right-0 h-6 bg-slate-50 dark:bg-[#0A0A0F] z-10 flex items-center px-4">
+                        <span className="text-xs text-brand-500 animate-pulse font-medium">typing...</span>
+                     </div>
+                  )}
+
+                  <div className="flex-1 space-y-3 mb-4 overflow-y-auto min-h-0 pr-1 pt-6">
                      {localChatHistory.map(msg => (
                        <MessageBubble 
                           key={msg.id}
@@ -634,18 +840,32 @@ export const SocialHub: React.FC<SocialHubProps> = ({
                      <div ref={privateMessagesEndRef} />
                   </div>
 
-                  <form onSubmit={handlePrivateSubmit} className="mt-auto flex gap-2 shrink-0 pb-1">
+                  <form onSubmit={handlePrivateSubmit} className="mt-auto flex gap-2 shrink-0 pb-1 items-end">
+                     
+                     <input type="file" accept="image/*" className="hidden" ref={privateFileInputRef} onChange={handlePrivateImageUpload} />
+                     <button type="button" onClick={() => privateFileInputRef.current?.click()} className="p-2 text-slate-400 hover:text-brand-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors shrink-0">
+                        <ImageIcon size={20} />
+                     </button>
+                     
+                     {!privateInput.trim() && (
+                        isRecordingPrivate ? (
+                           <button type="button" onClick={stopPrivateRecording} className="p-2 bg-red-500 text-white rounded-lg animate-pulse shrink-0"><Square size={20} fill="currentColor"/></button>
+                        ) : (
+                           <button type="button" onClick={startPrivateRecording} className="p-2 text-slate-400 hover:text-brand-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg shrink-0"><Mic size={20} /></button>
+                        )
+                     )}
+
                      <input 
                        className="flex-1 bg-slate-100 dark:bg-white/5 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none"
                        placeholder="Type message..."
                        value={privateInput}
-                       onChange={e => setPrivateInput(e.target.value)}
+                       onChange={handlePrivateTyping}
                        autoFocus
                      />
                      <button 
                        type="submit" 
                        disabled={!privateInput.trim()}
-                       className="p-2 bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition-colors disabled:opacity-50"
+                       className="p-2 bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition-colors disabled:opacity-50 shrink-0"
                      >
                        <Send size={18} />
                      </button>

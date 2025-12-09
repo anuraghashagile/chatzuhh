@@ -1,12 +1,10 @@
 
-
 import { useState, useCallback, useRef, useEffect } from 'react';
 import Peer, { DataConnection } from 'peerjs';
 import { supabase } from '../lib/supabase';
-import { Message, ChatMode, PeerData, PresenceState, UserProfile, RecentPeer, Friend, FriendRequest, ConnectionMetadata, DirectMessageEvent } from '../types';
+import { Message, ChatMode, PeerData, PresenceState, UserProfile, RecentPeer, Friend, FriendRequest, ConnectionMetadata, DirectMessageEvent, DirectStatusEvent } from '../types';
 import { 
   INITIAL_GREETING, 
-  STRANGER_DISCONNECTED_MSG, 
   ICE_SERVERS
 } from '../constants';
 
@@ -15,7 +13,7 @@ type RealtimeChannel = ReturnType<typeof supabase.channel>;
 
 const MATCHMAKING_CHANNEL = 'global-lobby-v1';
 
-export const useHumanChat = (userProfile: UserProfile | null) => {
+export const useHumanChat = (userProfile: UserProfile | null, persistentId?: string) => {
   // --- MAIN CHAT STATE (Random 1-on-1) ---
   const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState<ChatMode>(ChatMode.IDLE);
@@ -23,6 +21,7 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
   const [partnerRecording, setPartnerRecording] = useState(false);
   const [partnerProfile, setPartnerProfile] = useState<UserProfile | null>(null);
   const [remoteVanishMode, setRemoteVanishMode] = useState<boolean | null>(null);
+  const [partnerPeerId, setPartnerPeerId] = useState<string | null>(null);
   
   // --- GLOBAL STATE ---
   const [onlineUsers, setOnlineUsers] = useState<PresenceState[]>([]);
@@ -32,7 +31,8 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
   // --- DIRECT CHAT STATE (Social Hub) ---
   const [incomingDirectMessage, setIncomingDirectMessage] = useState<DirectMessageEvent | null>(null);
   const [incomingReaction, setIncomingReaction] = useState<{ messageId: string, emoji: string, sender: 'stranger' } | null>(null);
-  
+  const [incomingDirectStatus, setIncomingDirectStatus] = useState<DirectStatusEvent | null>(null);
+
   // Friend System State
   const [friends, setFriends] = useState<Friend[]>([]);
   const [incomingFriendRequest, setIncomingFriendRequest] = useState<FriendRequest | null>(null);
@@ -120,6 +120,21 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
     }
   }, []);
 
+  const removeFriend = useCallback((peerId: string) => {
+    const key = 'chat_friends';
+    try {
+      const existing = localStorage.getItem(key);
+      let friendList: Friend[] = existing ? JSON.parse(existing) : [];
+      
+      friendList = friendList.filter(f => f.id !== peerId);
+      
+      localStorage.setItem(key, JSON.stringify(friendList));
+      setFriends(friendList);
+    } catch (e) {
+      console.warn("Failed to remove friend", e);
+    }
+  }, []);
+
   // --- CLEANUP ---
   const cleanupMain = useCallback(() => {
     // 1. Leave Supabase Channel
@@ -147,6 +162,7 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
     setPartnerTyping(false);
     setPartnerRecording(false);
     setStatus(ChatMode.DISCONNECTED);
+    setPartnerPeerId(null);
     
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
@@ -219,15 +235,23 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
        }
 
     // 5. INDICATORS
-    } else if (data.type === 'typing' && isMain) {
-      setPartnerTyping(data.payload);
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-      if (data.payload) typingTimeoutRef.current = setTimeout(() => setPartnerTyping(false), 4000);
+    } else if (data.type === 'typing') {
+      if (isMain) {
+        setPartnerTyping(data.payload);
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        if (data.payload) typingTimeoutRef.current = setTimeout(() => setPartnerTyping(false), 4000);
+      } else {
+        setIncomingDirectStatus({ peerId: conn.peer, type: 'typing', value: data.payload });
+      }
 
-    } else if (data.type === 'recording' && isMain) {
-      setPartnerRecording(data.payload);
-      if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
-      if (data.payload) recordingTimeoutRef.current = setTimeout(() => setPartnerRecording(false), 4000);
+    } else if (data.type === 'recording') {
+      if (isMain) {
+        setPartnerRecording(data.payload);
+        if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+        if (data.payload) recordingTimeoutRef.current = setTimeout(() => setPartnerRecording(false), 4000);
+      } else {
+         setIncomingDirectStatus({ peerId: conn.peer, type: 'recording', value: data.payload });
+      }
 
     // 6. PROFILE
     } else if (data.type === 'profile') {
@@ -257,9 +281,10 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
     } else if (data.type === 'disconnect') {
       if (isMain) {
         setStatus(ChatMode.DISCONNECTED);
-        setMessages(prev => [...prev, STRANGER_DISCONNECTED_MSG]);
+        setMessages([]); // Clear chat history on disconnect
         mainConnRef.current?.close();
         mainConnRef.current = null;
+        setPartnerPeerId(null);
       } else {
         directConnsRef.current.delete(conn.peer);
       }
@@ -277,6 +302,7 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
        mainConnRef.current = conn;
        isMatchmakerRef.current = false;
        isConnectingRef.current = false;
+       setPartnerPeerId(conn.peer);
        
        if (channelRef.current && myPeerIdRef.current) {
           channelRef.current.track({
@@ -306,7 +332,8 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
     (conn as any).on('close', () => {
       if (conn === mainConnRef.current && status === ChatMode.CONNECTED) {
         setStatus(ChatMode.DISCONNECTED);
-        setMessages(prev => [...prev, STRANGER_DISCONNECTED_MSG]);
+        setMessages([]); // Clear chat history on close
+        setPartnerPeerId(null);
       } else {
         directConnsRef.current.delete(conn.peer);
       }
@@ -315,10 +342,8 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
     (conn as any).on('error', (err: any) => {
       console.error("Connection Error:", err);
       if (conn === mainConnRef.current) {
-         // Reset state if start connection failed
          if (status === ChatMode.SEARCHING || status === ChatMode.WAITING) {
            isMatchmakerRef.current = false;
-           // Consider retrying or showing error
          }
       }
     });
@@ -327,9 +352,15 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
 
   // --- INITIALIZE PEER ---
   const initPeer = useCallback(() => {
-    if (peerRef.current) return peerRef.current;
+    if (peerRef.current && !peerRef.current.destroyed) return peerRef.current;
 
-    const peer = new Peer({ debug: 1, config: { iceServers: ICE_SERVERS } });
+    const peerConfig = { debug: 1, config: { iceServers: ICE_SERVERS } };
+    
+    // Attempt to use persistent ID if available, otherwise PeerJS generates one
+    const peer = persistentId 
+      ? new Peer(persistentId, peerConfig)
+      : new Peer(peerConfig);
+
     peerRef.current = peer;
 
     (peer as any).on('open', (id: string) => {
@@ -348,16 +379,18 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
          if (isMatchmakerRef.current) {
            isMatchmakerRef.current = false;
          }
+      } else if (err.type === 'unavailable-id') {
+         console.warn("Persistent ID is taken. Connection might be active in another tab or not cleaned up.");
+         // Note: If ID is taken, peer won't open.
       }
     });
 
     return peer;
-  }, [setupConnection]);
+  }, [setupConnection, persistentId]);
 
 
   // --- CONNECT (RANDOM) ---
   const connect = useCallback(() => {
-    // Prevent spam calls
     if (isConnectingRef.current) return;
     isConnectingRef.current = true;
 
@@ -367,7 +400,7 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
     setRemoteVanishMode(null);
     setError(null);
     setIncomingFriendRequest(null);
-    isMatchmakerRef.current = false; // Ensure explicit reset
+    isMatchmakerRef.current = false;
     
     const peer = initPeer();
 
@@ -383,7 +416,6 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
     setStatus(ChatMode.SEARCHING);
     setError(null);
     
-    // Ensure previous channel is gone
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
     }
@@ -401,7 +433,6 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
 
         if (isMatchmakerRef.current || mainConnRef.current?.open) return;
 
-        // Sort by timestamp
         const sortedWaiters = allUsers
           .filter(u => u.status === 'waiting')
           .sort((a, b) => a.timestamp - b.timestamp);
@@ -427,7 +458,7 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
                    isMatchmakerRef.current = false;
                    mainConnRef.current = null;
                  }
-               }, 8000); // 8 seconds timeout
+               }, 8000);
              } else {
                isMatchmakerRef.current = false;
              }
@@ -446,7 +477,7 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
             profile: userProfile
           });
           setStatus(ChatMode.WAITING);
-          isConnectingRef.current = false; // Successfully joined lobby
+          isConnectingRef.current = false;
         }
       });
   }, [setupConnection, userProfile]);
@@ -556,6 +587,41 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
       conn.send(payload);
     }
   }, [setupConnection]);
+
+  // --- SEND DIRECT MEDIA ---
+  const sendDirectImage = useCallback((targetPeerId: string, base64Image: string, id?: string) => {
+    const conn = directConnsRef.current.get(targetPeerId);
+    if (conn) {
+       const payload: PeerData = {
+          type: 'message',
+          payload: base64Image,
+          dataType: 'image',
+          id: id || Date.now().toString()
+       };
+       conn.send(payload);
+    }
+  }, []);
+
+  const sendDirectAudio = useCallback((targetPeerId: string, base64Audio: string, id?: string) => {
+    const conn = directConnsRef.current.get(targetPeerId);
+    if (conn) {
+       const payload: PeerData = {
+          type: 'message',
+          payload: base64Audio,
+          dataType: 'audio',
+          id: id || Date.now().toString()
+       };
+       conn.send(payload);
+    }
+  }, []);
+
+  const sendDirectTyping = useCallback((targetPeerId: string, isTyping: boolean) => {
+    const conn = directConnsRef.current.get(targetPeerId);
+    if (conn) {
+      conn.send({ type: 'typing', payload: isTyping });
+    }
+  }, []);
+
 
   // --- SEND DIRECT FRIEND REQUEST ---
   const sendDirectFriendRequest = useCallback((targetPeerId: string) => {
@@ -668,16 +734,23 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
       saveToRecent(partnerProfile, mainConnRef.current.peer);
     }
     cleanupMain();
+    setMessages([]); 
   }, [cleanupMain, partnerProfile, saveToRecent]);
 
+  // Clean up PeerJS on page unload to allow ID reuse
   useEffect(() => {
+    const handleBeforeUnload = () => {
+      peerRef.current?.destroy();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       cleanupMain();
       directConnsRef.current.forEach(c => c.close());
       directConnsRef.current.clear();
       peerRef.current?.destroy();
     };
-  }, []); 
+  }, [cleanupMain]); 
 
   return { 
     messages,
@@ -686,16 +759,22 @@ export const useHumanChat = (userProfile: UserProfile | null) => {
     partnerTyping,
     partnerRecording,
     partnerProfile,
+    partnerPeerId,
     remoteVanishMode,
     onlineUsers,
     myPeerId,
     error,
     friends,
+    removeFriend,
     incomingFriendRequest,
     incomingReaction,
     incomingDirectMessage, 
+    incomingDirectStatus,
     sendMessage, 
     sendDirectMessage,
+    sendDirectImage,
+    sendDirectAudio,
+    sendDirectTyping,
     sendDirectFriendRequest,
     sendImage,
     sendAudio,

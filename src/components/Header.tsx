@@ -1,7 +1,7 @@
 
 
 import React, { useState } from 'react';
-import { Infinity, Moon, Sun, Settings, ArrowLeft, Edit2, AlertTriangle, UserPlus } from 'lucide-react';
+import { Ghost, Moon, Sun, Settings, ArrowLeft, Edit2, AlertTriangle, UserPlus, Check, Heart } from 'lucide-react';
 import { ChatMode, UserProfile } from '../types';
 
 interface HeaderProps {
@@ -14,6 +14,7 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onEditProfile: () => void;
   onAddFriend?: () => void;
+  isFriend?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({ 
@@ -25,7 +26,8 @@ export const Header: React.FC<HeaderProps> = ({
   partnerProfile,
   onOpenSettings,
   onEditProfile,
-  onAddFriend
+  onAddFriend,
+  isFriend = false
 }) => {
   const [showConfirmEnd, setShowConfirmEnd] = useState(false);
   const isConnected = mode === ChatMode.CONNECTED;
@@ -78,10 +80,12 @@ export const Header: React.FC<HeaderProps> = ({
             // Default Header
             <div className="flex items-center gap-3">
               <div className="text-slate-900 dark:text-white shrink-0 hidden sm:block">
-                <Infinity className="w-8 h-8" strokeWidth={2.5} />
+                <img src="https://i.ibb.co/68038vj/73229-1.png" alt="Logo" className="w-8 h-8 object-contain" />
               </div>
               <div>
-                <h1 className="font-bold text-lg leading-tight text-slate-900 dark:text-white tracking-tight">Chatzuno</h1>
+                <h1 className="font-bold text-lg leading-tight tracking-tight">
+                   <span className="text-slate-900 dark:text-white">Strangers</span><span className="text-red-500">In</span><span className="text-slate-900 dark:text-white">Town</span>
+                </h1>
                 <div className="flex items-center gap-1.5">
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -110,13 +114,19 @@ export const Header: React.FC<HeaderProps> = ({
           {mode !== ChatMode.IDLE && (
             <>
                {isConnected && onAddFriend && (
-                  <button 
-                    onClick={onAddFriend}
-                    className="p-2.5 text-brand-500 hover:bg-brand-50 dark:hover:bg-brand-900/20 rounded-full transition-colors"
-                    title="Add Friend"
-                  >
-                    <UserPlus size={18} />
-                  </button>
+                  isFriend ? (
+                     <div className="p-2.5 text-emerald-500 bg-emerald-500/10 rounded-full cursor-default" title="Friends">
+                        <Check size={18} strokeWidth={3} />
+                     </div>
+                  ) : (
+                    <button 
+                      onClick={onAddFriend}
+                      className="p-2.5 text-brand-500 hover:bg-brand-50 dark:hover:bg-brand-900/20 rounded-full transition-colors"
+                      title="Add Friend"
+                    >
+                      <UserPlus size={18} />
+                    </button>
+                  )
                )}
                <button 
                  onClick={onEditProfile}
@@ -127,9 +137,10 @@ export const Header: React.FC<HeaderProps> = ({
                </button>
                <button 
                  onClick={onOpenSettings}
-                 className="p-2.5 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 rounded-full transition-colors hidden sm:block"
+                 className="p-2.5 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 rounded-full transition-colors"
+                 title="Settings / Vanish Mode"
                >
-                <Settings size={18} />
+                <Ghost size={18} />
                </button>
 
                {isConnected && (
