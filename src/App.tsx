@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Loader2, RefreshCw, EyeOff, Shield, Image as ImageIcon, Mic, X, Square, AlertTriangle, UserPlus, Check, Bell } from 'lucide-react';
 import { supabase, saveMessageToHistory, fetchChatHistory } from './lib/supabase';
@@ -17,7 +16,6 @@ import { EditMessageModal } from './components/EditMessageModal';
 import Loader from './components/Loader';
 import { clsx } from 'clsx';
 
-// Simple user ID persistence
 const getStoredUserId = () => {
   if (typeof window === 'undefined') return 'server_user';
   let id = localStorage.getItem('chat_user_id');
@@ -28,17 +26,13 @@ const getStoredUserId = () => {
   return id;
 };
 
-// Theme initialization with system preference support
 const getInitialTheme = (): 'light' | 'dark' => {
   if (typeof window !== 'undefined') {
-    // 1. Check Local Storage
     const saved = localStorage.getItem('chat_theme') as 'light' | 'dark';
     if (saved) return saved;
-    // 2. Check System Preference
     if (window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
     if (window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
   }
-  // 3. Default
   return 'dark';
 };
 
@@ -50,18 +44,9 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [inputText, setInputText] = useState('');
   
-  // App Settings State
-  const [settings, setSettings] = useState<AppSettings>({
-    vanishMode: false
-  });
-
-  // Session State (Random vs Direct)
+  const [settings, setSettings] = useState<AppSettings>({ vanishMode: false });
   const [sessionType, setSessionType] = useState<SessionType>('random');
-
-  // Edit State
   const [editingMessage, setEditingMessage] = useState<{id: string, text: string} | null>(null);
-  
-  // Friend Online Notification State
   const [friendNotification, setFriendNotification] = useState<string | null>(null);
   
   const [isRecording, setIsRecording] = useState(false);
@@ -73,76 +58,36 @@ export default function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   
-  // Track previous online users to detect new logins
   const prevOnlineUserIds = useRef<Set<string>>(new Set());
 
-  // Initialize Chat Hooks
-  // Passing userId as persistentId ensures stable identity across refreshes
   const { 
-    messages,
-    setMessages, 
-    status, 
-    partnerTyping, 
-    partnerRecording,
-    partnerProfile,
-    partnerPeerId,
-    remoteVanishMode,
-    onlineUsers, 
-    myPeerId, 
-    error,
-    friends,
-    friendRequests,
-    removeFriend,
-    incomingReaction,
-    incomingDirectMessage,
-    incomingDirectStatus,
-    sendMessage, 
-    sendDirectMessage,
-    sendDirectImage,
-    sendDirectAudio,
-    sendDirectTyping,
-    sendDirectFriendRequest, 
-    sendImage, 
-    sendAudio,
-    sendReaction,
-    editMessage,
-    sendTyping, 
-    sendRecording,
-    updateMyProfile,
-    sendVanishMode,
-    sendFriendRequest,
-    acceptFriendRequest,
-    rejectFriendRequest,
-    connect, 
-    callPeer, 
-    disconnect 
+    messages, setMessages, status, partnerTyping, partnerRecording, partnerProfile, partnerPeerId, remoteVanishMode,
+    onlineUsers, myPeerId, error, friends, friendRequests, removeFriend, incomingReaction, incomingDirectMessage, incomingDirectStatus,
+    sendMessage, sendDirectMessage, sendDirectImage, sendDirectAudio, sendDirectTyping, sendDirectFriendRequest, 
+    sendImage, sendAudio, sendReaction, editMessage, sendTyping, sendRecording, updateMyProfile, sendVanishMode,
+    sendFriendRequest, acceptFriendRequest, rejectFriendRequest, connect, callPeer, disconnect 
   } = useHumanChat(userProfile, userId);
 
   const { globalMessages, sendGlobalMessage } = useGlobalChat(userProfile, myPeerId);
 
-  // --- AUTO LOGIN ---
   useEffect(() => {
     const savedProfile = localStorage.getItem('chat_user_profile');
     if (savedProfile) {
       try {
         const parsed = JSON.parse(savedProfile);
         setUserProfile(parsed);
-        // Defer connection slightly to ensure hydration
-        setTimeout(() => connect(), 100);
       } catch (e) {
         console.error("Failed to load profile", e);
       }
     }
-  }, []); // Run once on mount
+  }, []);
 
-  // --- SYNC VANISH MODE ---
   useEffect(() => {
     if (remoteVanishMode !== null && remoteVanishMode !== undefined) {
       setSettings(prev => ({ ...prev, vanishMode: remoteVanishMode }));
     }
   }, [remoteVanishMode]);
 
-  // --- AUTO-DELETE MESSAGES ---
   useEffect(() => {
     const interval = setInterval(() => {
       if (messages.some(m => m.isVanish)) {
@@ -156,12 +101,8 @@ export default function App() {
     return () => clearInterval(interval);
   }, [messages, setMessages]);
 
-
-  // --- HISTORY LOADING ---
   useEffect(() => {
-    const loadHistory = async () => {
-      await fetchChatHistory(userId);
-    };
+    const loadHistory = async () => { await fetchChatHistory(userId); };
     loadHistory();
   }, [userId]);
 
@@ -172,13 +113,9 @@ export default function App() {
     }
   }, [messages, userId, settings.vanishMode]);
 
-  // Theme management
   useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    if (theme === 'dark') document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
   }, [theme]);
 
   const toggleTheme = () => {
@@ -189,30 +126,20 @@ export default function App() {
     });
   };
 
-  // --- FRIEND ONLINE NOTIFICATIONS ---
   useEffect(() => {
     if (!userProfile) return;
-    
     const currentOnlineIds = new Set(onlineUsers.map(u => u.peerId));
-    
-    // Check if friends list is loaded
     if (friends.length > 0) {
       friends.forEach(friend => {
-        // If friend is online NOW and was NOT online before
         if (currentOnlineIds.has(friend.id) && !prevOnlineUserIds.current.has(friend.id)) {
-          // Trigger notification
           setFriendNotification(`${friend.profile.username} is now online!`);
           setTimeout(() => setFriendNotification(null), 4000);
         }
       });
     }
-
-    // Update ref
     prevOnlineUserIds.current = currentOnlineIds;
   }, [onlineUsers, friends, userProfile]);
 
-
-  // Auto-scroll for Main Chat
   useEffect(() => {
     if (sessionType === 'random') {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -225,8 +152,8 @@ export default function App() {
     localStorage.setItem('chat_user_profile', JSON.stringify(profile));
     setUserProfile(profile);
     setShowJoinModal(false);
-    setSessionType('random'); // Explicitly set Random session
-    connect();
+    setSessionType('random');
+    // Lobby connection handles "Online", click New Chat to start searching
   };
 
   const handleUpdateProfile = (profile: UserProfile) => {
@@ -243,20 +170,14 @@ export default function App() {
     }
   };
 
-  // Wrapper for Direct Calls from Social Hub
   const handleDirectCall = (peerId: string, profile?: UserProfile) => {
-    // Just initiate the connection logic. 
-    // We DO NOT change the main view or disconnect the main chat.
     callPeer(peerId, profile);
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim()) return;
-    
-    // Send to Main Chat (Stranger)
     sendMessage(inputText);
-    
     if (settings.vanishMode) {
       setMessages(prev => {
         const last = prev[prev.length - 1];
@@ -268,7 +189,6 @@ export default function App() {
         return prev;
       });
     }
-
     sendTyping(false);
     setInputText('');
   };
@@ -282,15 +202,12 @@ export default function App() {
 
   const handleNewChat = () => {
     setSessionType('random'); 
-    disconnect(); // Disconnects main chat only
-    setTimeout(() => {
-      connect();
-    }, 150); // Small delay to ensure cleanup
+    disconnect();
+    // Immediate reconnect call, lobby logic handles the rest
+    connect();
   };
 
-  const initiateEdit = (id: string, text: string) => {
-    setEditingMessage({ id, text });
-  };
+  const initiateEdit = (id: string, text: string) => { setEditingMessage({ id, text }); };
 
   const saveEditedMessage = (newText: string) => {
     if (editingMessage) {
@@ -299,14 +216,12 @@ export default function App() {
     }
   };
 
-  // --- IMAGE & AUDIO HANDLERS ---
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        const base64 = reader.result as string;
-        sendImage(base64);
+        sendImage(reader.result as string);
       };
       reader.readAsDataURL(file);
     }
@@ -327,8 +242,7 @@ export default function App() {
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = () => {
-           const base64Audio = reader.result as string;
-           sendAudio(base64Audio);
+           sendAudio(reader.result as string);
         };
         stream.getTracks().forEach(track => track.stop());
       };
@@ -351,13 +265,9 @@ export default function App() {
 
   const isConnected = status === ChatMode.CONNECTED;
   const isSearching = status === ChatMode.SEARCHING || status === ChatMode.WAITING;
-  
-  // Check if current partner is a friend
   const isCurrentPartnerFriend = partnerPeerId ? friends.some(f => f.id === partnerPeerId) : false;
 
-  // --- VIEW RENDERING LOGIC ---
   const renderMainContent = () => {
-    // 1. Landing Page (Only if IDLE and no profile)
     if (status === ChatMode.IDLE && !userProfile) {
       return (
         <LandingPage 
@@ -369,17 +279,11 @@ export default function App() {
       );
     }
 
-    // 2. Chat Interface (Includes Searching Overlay)
-    // We keep this structure mounted to preserve the Social Hub Anchor
     return (
       <div className="flex-1 flex flex-col h-full relative overflow-hidden">
-         
-         {/* SEARCHING / MATCHING OVERLAY */}
          {isSearching && (
            <div className="absolute inset-0 z-30 bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-300">
-             <div className="relative mb-8">
-               <Loader />
-             </div>
+             <div className="relative mb-8"><Loader /></div>
              <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-3">Matching you...</h2>
              <p className="text-slate-500 dark:text-slate-400 max-w-xs mx-auto animate-pulse mb-8">
                 Finding a stranger with similar vibes...
@@ -393,13 +297,12 @@ export default function App() {
            </div>
          )}
 
-         {/* Messages Area */}
         <div className={clsx(
           "flex-1 overflow-y-auto p-4 sm:p-6 space-y-2 w-full max-w-4xl mx-auto z-10 relative scroll-smooth",
           (messages.length === 0 && (status === ChatMode.DISCONNECTED || status === ChatMode.IDLE)) && "flex flex-col justify-center"
         )}>
           {!partnerProfile && status === ChatMode.CONNECTED && (
-              <div className="text-center text-xs text-slate-400 my-4">Connected encrypted connection...</div>
+              <div className="text-center text-xs text-slate-400 my-4">Connected with {partnerProfile?.username || 'Stranger'}...</div>
           )}
           
           {messages.map((msg) => (
@@ -435,24 +338,18 @@ export default function App() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Area - ALWAYS RENDERED (to keep Anchor valid) */}
         <div className={clsx(
           "border-t shrink-0 w-full z-20 pb-[env(safe-area-inset-bottom)] transition-colors relative",
           settings.vanishMode ? "bg-[#1a0b2e] dark:bg-[#1a0b2e] border-purple-500/30" : "bg-white dark:bg-slate-900 border-slate-200 dark:border-white/5",
-          (!isConnected && !isSearching) && "opacity-100", // Keep visible when disconnected so social icon stays
-          isSearching && "invisible" // Hide visually but keep in layout? No, use invisible or it captures clicks. invisible works for layout
+          (!isConnected && !isSearching) && "opacity-100", 
+          isSearching && "invisible" 
         )}>
           <div className={clsx("max-w-4xl mx-auto p-2 sm:p-4", isSearching && "pointer-events-none")}>
             {partnerTyping && (
-              <div className="h-5 px-4 mb-1 text-xs text-brand-500 font-medium animate-pulse flex items-center gap-1">
-                  typing...
-              </div>
+              <div className="h-5 px-4 mb-1 text-xs text-brand-500 font-medium animate-pulse flex items-center gap-1">typing...</div>
             )}
-
             <form onSubmit={handleSendMessage} className="flex gap-2 items-end relative">
-              {/* --- ANCHOR FOR SOCIAL HUB BUTTON (PERSISTENT) --- */}
               <div id="social-hub-trigger-anchor" className="absolute bottom-[calc(100%+8px)] right-0 z-30 w-12 h-12 pointer-events-none"></div>
-              
               <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload} disabled={!isConnected}/>
               <button type="button" onClick={() => fileInputRef.current?.click()} className="p-3 text-slate-400 hover:text-brand-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors disabled:opacity-50 shrink-0"><ImageIcon size={24} /></button>
               {!inputText.trim() && (
@@ -462,7 +359,6 @@ export default function App() {
                     <button type="button" onClick={startRecording} className="p-3 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-200 rounded-xl transition-all active:scale-95 disabled:opacity-50 shrink-0" disabled={!isConnected}><Mic size={24} /></button>
                   )
               )}
-
               <div className={clsx("relative flex-1 rounded-2xl flex items-center min-h-[50px] bg-slate-100 dark:bg-slate-800")}>
                 <input
                   type="text"
@@ -474,7 +370,6 @@ export default function App() {
                   disabled={!isConnected}
                 />
               </div>
-
               {inputText.trim() && (
                 <button type="submit" className="p-3 bg-brand-600 hover:bg-brand-700 text-white rounded-xl shadow-lg shadow-brand-500/20 transition-all active:scale-95 shrink-0"><Send size={24} /></button>
               )}
@@ -490,12 +385,10 @@ export default function App() {
       "h-[100dvh] bg-slate-50 dark:bg-slate-950 transition-colors flex flex-col fixed inset-0 overflow-hidden",
       settings.vanishMode && "dark:bg-slate-950" 
     )}>
-      
       {settings.vanishMode && (
         <div className="absolute inset-0 pointer-events-none z-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5"></div>
       )}
 
-      {/* Header - Always Visible if not IDLE (and not direct) */}
       {(status !== ChatMode.IDLE || userProfile) && (
         <Header 
           onlineCount={onlineUsers.length} 
@@ -511,9 +404,9 @@ export default function App() {
         />
       )}
 
-      {/* Friend Request Toast (Kept for instant notification, but user can manage in Social Hub) */}
+      {/* FRIEND REQUEST TOAST */}
       {friendRequests.length > 0 && (
-        <div className="fixed top-20 right-4 sm:right-6 z-[60] animate-in slide-in-from-right-10 fade-in duration-300">
+        <div className="fixed top-20 right-4 sm:right-6 z-[80] animate-in slide-in-from-right-10 fade-in duration-300 pointer-events-auto">
           <div className="bg-white dark:bg-[#0A0A0F] border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl p-4 flex flex-col gap-3 w-72">
              <div className="flex items-start gap-3">
                <div className="w-10 h-10 rounded-full bg-brand-500 text-white flex items-center justify-center font-bold">
@@ -524,41 +417,24 @@ export default function App() {
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     {friendRequests[0].profile.username} wants to connect!
                  </p>
-                 {friendRequests.length > 1 && (
-                    <p className="text-[10px] text-brand-500 font-bold mt-1">+{friendRequests.length - 1} others pending</p>
-                 )}
                </div>
              </div>
              <div className="flex gap-2">
-               <Button 
-                 onClick={() => acceptFriendRequest && acceptFriendRequest(friendRequests[0])} 
-                 className="flex-1 py-1.5 text-xs h-8"
-               >
-                 Accept
-               </Button>
-               <Button 
-                 variant="secondary" 
-                 onClick={() => rejectFriendRequest && rejectFriendRequest(friendRequests[0].peerId)} 
-                 className="flex-1 py-1.5 text-xs h-8"
-               >
-                 Ignore
-               </Button>
+               <Button onClick={() => acceptFriendRequest && acceptFriendRequest(friendRequests[0])} className="flex-1 py-1.5 text-xs h-8">Accept</Button>
+               <Button variant="secondary" onClick={() => rejectFriendRequest && rejectFriendRequest(friendRequests[0].peerId)} className="flex-1 py-1.5 text-xs h-8">Ignore</Button>
              </div>
           </div>
         </div>
       )}
 
-      {/* Friend Online Toast */}
       {friendNotification && (
          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[60] animate-in slide-in-from-top-5 duration-300">
             <div className="bg-emerald-500 text-white px-4 py-2.5 rounded-full shadow-lg flex items-center gap-3 text-sm font-bold">
-               <Bell size={16} fill="currentColor" />
-               {friendNotification}
+               <Bell size={16} fill="currentColor" /> {friendNotification}
             </div>
          </div>
       )}
 
-      {/* Error Toast */}
       {error && sessionType === 'random' && (
          <div className="fixed top-24 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-5">
             <div className="bg-red-500 text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2 text-sm font-medium">
@@ -567,41 +443,28 @@ export default function App() {
          </div>
       )}
 
-      {/* Vanish Mode Badge */}
       {settings.vanishMode && status === ChatMode.CONNECTED && sessionType === 'random' && (
          <div className="absolute top-16 left-0 right-0 z-40 flex justify-center pointer-events-none animate-in slide-in-from-top-4">
             <div className="bg-purple-500/10 backdrop-blur-md border border-purple-500/20 px-4 py-1.5 rounded-b-xl text-[10px] font-bold text-purple-400 uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-purple-900/20">
-               <EyeOff size={12} />
-               Vanish Mode Active
+               <EyeOff size={12} /> Vanish Mode Active
             </div>
          </div>
       )}
 
-      {/* Main Content Area */}
       {renderMainContent()}
 
-      {/* Modals & Overlays */}
       <SettingsModal isOpen={showSettingsModal} onClose={() => setShowSettingsModal(false)} settings={settings} onUpdateSettings={handleUpdateSettings}/>
       
       {showJoinModal && (
-        <JoinModal 
-           onClose={() => setShowJoinModal(false)} 
-           onJoin={handleJoin} 
-        />
+        <JoinModal onClose={() => setShowJoinModal(false)} onJoin={handleJoin} />
       )}
       
       {showEditProfileModal && userProfile && (
         <JoinModal onClose={() => setShowEditProfileModal(false)} onJoin={handleUpdateProfile} initialProfile={userProfile} isEditing={true}/>
       )}
       
-      <EditMessageModal 
-        isOpen={!!editingMessage}
-        onClose={() => setEditingMessage(null)}
-        initialText={editingMessage?.text || ''}
-        onSave={saveEditedMessage}
-      />
+      <EditMessageModal isOpen={!!editingMessage} onClose={() => setEditingMessage(null)} initialText={editingMessage?.text || ''} onSave={saveEditedMessage} />
 
-      {/* Social Hub - PERSISTENT COMPONENT */}
       {userProfile && (
         <SocialHub 
           onlineUsers={onlineUsers} 
