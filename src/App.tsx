@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Loader2, RefreshCw, EyeOff, Shield, Image as ImageIcon, Mic, X, Square, AlertTriangle, UserPlus, Check, Bell } from 'lucide-react';
+import { Send, Loader2, RefreshCw, EyeOff, Shield, Image as ImageIcon, Mic, X, Square, AlertTriangle, UserPlus, Check, Bell, Sparkles } from 'lucide-react';
 import { supabase, saveMessageToHistory, fetchChatHistory } from './lib/supabase';
 import { Message, ChatMode, UserProfile, AppSettings, SessionType } from './types';
 import { useHumanChat } from './hooks/useHumanChat';
@@ -48,6 +48,7 @@ export default function App() {
   const [sessionType, setSessionType] = useState<SessionType>('random');
   const [editingMessage, setEditingMessage] = useState<{id: string, text: string} | null>(null);
   const [friendNotification, setFriendNotification] = useState<string | null>(null);
+  const [hasChatted, setHasChatted] = useState(false);
   
   const [isRecording, setIsRecording] = useState(false);
   const userId = useRef(getStoredUserId()).current;
@@ -87,6 +88,12 @@ export default function App() {
       setSettings(prev => ({ ...prev, vanishMode: remoteVanishMode }));
     }
   }, [remoteVanishMode]);
+
+  useEffect(() => {
+    if (status === ChatMode.CONNECTED) {
+      setHasChatted(true);
+    }
+  }, [status]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -325,15 +332,32 @@ export default function App() {
                 "flex flex-col items-center gap-6 animate-in fade-in zoom-in-95",
                 messages.length > 0 ? "py-8 mt-8 border-t border-slate-100 dark:border-white/5 pt-8" : "w-full"
               )}>
-                <div className="w-20 h-20 bg-red-50 dark:bg-red-900/10 rounded-full flex items-center justify-center text-red-500 mb-2">
-                   <X size={40} />
-                </div>
-                <div className="text-center space-y-2">
-                  <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Chat Ended</h3>
-                  <p className="text-slate-500 dark:text-slate-400 text-base max-w-xs mx-auto">
-                    The connection has been closed.
-                  </p>
-                </div>
+                {hasChatted ? (
+                  <>
+                    <div className="w-20 h-20 bg-red-50 dark:bg-red-900/10 rounded-full flex items-center justify-center text-red-500 mb-2">
+                      <X size={40} />
+                    </div>
+                    <div className="text-center space-y-2">
+                      <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Chat Ended</h3>
+                      <p className="text-slate-500 dark:text-slate-400 text-base max-w-xs mx-auto">
+                        The connection has been closed.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-20 h-20 bg-brand-50 dark:bg-brand-900/10 rounded-full flex items-center justify-center text-brand-500 mb-2">
+                       <Sparkles size={40} />
+                    </div>
+                    <div className="text-center space-y-2">
+                      <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Start Matching</h3>
+                      <p className="text-slate-500 dark:text-slate-400 text-base max-w-xs mx-auto">
+                        Connect with random people anonymously.
+                      </p>
+                    </div>
+                  </>
+                )}
+                
                 <Button onClick={handleNewChat} className="shadow-lg shadow-brand-500/20 px-8 py-4 text-lg rounded-2xl w-full sm:w-auto">
                    <RefreshCw size={20} /> Find New Stranger
                 </Button>
